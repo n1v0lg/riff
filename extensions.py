@@ -112,7 +112,7 @@ def sort(rel, key, ascending=True):
     bitonic_sort(0, len(rel), ascending=ascending)
     return rel
 
-# such difured wow
+# such defuredz wow
 class MagicDeferred:
 
     def __init__(self, d):
@@ -135,28 +135,14 @@ class MagicDeferred:
 def count(rel, cond):
     return sum([cond(row) for row in rel])
 
-def magic(d, rt, times=1):
+def magic(f):
+
+    def wrapper(self, *args, **kwargs):
+        md = MagicDeferred(f(self, *args, **kwargs))
+        self.mag_defs.append(md)
+        return md
     
-    def forward_to(received, defs):
-        for d in defs:
-            rt.handle_deferred_data(d, received)
-
-    if times < 2:
-        # No need to "split" deferred
-        return iter([d])
-
-    defs = [Deferred() for _ in range(times)]
-    rt.schedule_callback(d, forward_to, defs)
-    return iter(defs)
-
-def shuffle(rel, rt, Zp):
-    # TODO: double-check this
-    indeces = list(range(len(rel)))
-    random.shuffle(indeces)
-    result = [row + [sum(rt.shamir_share([1, 2, 3], Zp, idx))] 
-              for row, idx in zip(rel, indeces)]
-    srt = sort(result, lambda x: x[len(x) - 1])
-    return [row[:-1] for row in srt]
+    return wrapper
 
 def cutofftail(f):
     
@@ -164,21 +150,25 @@ def cutofftail(f):
         without_indicator = [row[:-1] for row in rel]
         rt.handle_deferred_data(d, without_indicator[0:len(rel) - int(tail_len)])
 
-    def wrapper(rels, rt, *args, **kwargs):
-        result = f(rels, rt, *args, **kwargs)
+    def wrapper(self, *args, **kwargs):
+        result = f(self, *args, **kwargs)
         sorted_by_val = sort(result, lambda x: x[-1], False)
         tail_len = count(sorted_by_val, lambda x: x[-1] == 0)
-        opened_tail_len = rt.open(tail_len)
+        opened_tail_len = self.rt.open(tail_len)
         d = Deferred()
-        rt.schedule_callback(opened_tail_len, tail_len_received, 
-            sorted_by_val, rt, d)
+        self.rt.schedule_callback(opened_tail_len, tail_len_received, 
+            sorted_by_val, self.rt, d)
         return d
     return wrapper
 
-def join(rel, other_rel, rt, join_col, other_join_col, magic):
+class Rel:
+
+    def __init__(self, rt):
+        self.rt = rt
+        self.mag_defs = []
 
     @cutofftail
-    def _join(rels, rt, join_col, other_join_col):
+    def _join(self, rels, join_col, other_join_col):
         rel, other_rel, result = rels[0][1], rels[1][1], []
         for row in rel:
             for other_row in other_rel:
@@ -190,16 +180,17 @@ def join(rel, other_rel, rt, join_col, other_join_col, magic):
                 result.append(result_row)
         return result
 
-    dl = DeferredList([rel.another(), other_rel.another()])
-    md = MagicDeferred(rt.schedule_callback(dl, _join, rt, join_col, other_join_col))
-    magic.append(md)
-    return md
+    @magic
+    def join(self, rel, other_rel, join_col, other_join_col):
+        d = DeferredList([rel.another(), other_rel.another()])
+        return self.rt.schedule_callback(d, self._join, join_col, 
+            other_join_col)
 
-def aggregate_sum(rel, rt, key_col, agg_col, magic):
-    
     @cutofftail
-    def _aggregate_sum(rel, rt, key_col, agg_col):
+    def _aggregate_sum(self, rel, key_col, agg_col):
 
+        # Note: the indicator value of the last element will
+        # *always* be 1
         def cond_sum(e1, e2, key, val, ind):
             comp = e1[key] == e2[key]
             val1_copy = e1[val] 
@@ -223,77 +214,74 @@ def aggregate_sum(rel, rt, key_col, agg_col, magic):
 
         return result
 
-    md = MagicDeferred(rt.schedule_callback(rel.another(), _aggregate_sum, rt, key_col, agg_col))
-    magic.append(md)
-    return md
-    
-def project(rel, rt, comp, magic):
+    @magic
+    def aggregate_sum(self, rel, key_col, agg_col):
+        return self.rt.schedule_callback(rel.another(), self._aggregate_sum, key_col, agg_col)
 
-    def _project(rel, comp):
+    def _project(self, rel, comp):
         return [comp(*row) for row in rel]
 
-    md = MagicDeferred(rt.schedule_callback(rel.another(), _project, comp))
-    magic.append(md)
-    return md
-    
-def select(rel, rt, cond, magic):
-    # TODO: implement
-    md = MagicDeferred(rel.another())
-    magic.append(md)
-    return md
-    
-def input(rel, rt, inputters, field, magic):
-    
-    def _input(rel, rt, inputters, field):
+    @magic        
+    def project(self, rel, comp):
+        return self.rt.schedule_callback(rel.another(), self._project, comp)
+        
+    @magic
+    def select(self, rel, cond):
+        # TODO: implement
+        return rel.another()
+        
+    def _input(self, rel, inputters, field):
 
         def sizes_received(sizes, rel, shared_rel):
             sizes = [int(size) for size in sizes]
             num_cols = len(rel[0]) # bit of a hack
             combined_rel = []
-            for player in rt.players:
-                if rt.id == player:
+            for player in self.rt.players:
+                if self.rt.id == player:
                     for row in rel:
                         combined_rel.append(
-                            [rt.input([player], field, col) for col in row]
+                            [self.rt.input([player], field, col) for col in row]
                         )
                 else:
                     for _ in range(sizes[player - 1]):
                         combined_rel.append(
-                            [rt.input([player], field, None) for _ in range(num_cols)]
+                            [self.rt.input([player], field, None) for _ in range(num_cols)]
                         )
-            rt.handle_deferred_data(shared_rel, combined_rel)
-            
-        sizes = rt.shamir_share(inputters, field, len(rel))
-        sizes = gather_shares(map(rt.open, sizes))
+            self.rt.handle_deferred_data(shared_rel, combined_rel)
+                
+        sizes = self.rt.shamir_share(inputters, field, len(rel))
+        sizes = gather_shares([self.rt.open(size) for size in sizes])
         shared_rel = Deferred()
-        rt.schedule_callback(sizes, sizes_received, rel, shared_rel) 
+        self.rt.schedule_callback(sizes, sizes_received, rel, shared_rel) 
         return shared_rel
-
-    md = MagicDeferred(_input(rel, rt, inputters, field))
-    magic.append(md)
-    return md
-    
-def output(rel, rt):
-
-    def _output(rel, rt):
+        
+    @magic
+    def input(self, rel, inputters, field):
+        return self._input(rel, inputters, field)
+        
+    def _output(self, rel):
 
         def update_value(value, rel, row_idx, col_idx):
             rel[row_idx][col_idx] = int(value)
 
         def all_gathered(dummy, d, rel):
             rel = [[int(v) for v in row] for row in rel]
-            rt.handle_deferred_data(d, rel)
-            
+            self.rt.handle_deferred_data(d, rel)
+                
         to_wait_on = []
         for row_idx, row in enumerate(rel):
             for col_idx, value in enumerate(row):
-                opened = rt.output(value)
-                rt.schedule_callback(opened, update_value, rel, row_idx, col_idx)
+                opened = self.rt.output(value)
+                self.rt.schedule_callback(opened, update_value, rel, row_idx, col_idx)
                 to_wait_on.append(opened)
         d = Deferred() 
         dl = gather_shares(to_wait_on)
-        rt.schedule_callback(dl, all_gathered, d, rel)
+        self.rt.schedule_callback(dl, all_gathered, d, rel)
         return d
 
-    return rt.schedule_callback(rel.another(), _output, rt)
+    def output(self, rel):
+        return self.rt.schedule_callback(rel.another(), self._output)
     
+    def finish(self):
+        for md in self.mag_defs:
+            md.forward_callbacks(self.rt)
