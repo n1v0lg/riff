@@ -4,7 +4,7 @@ from math import floor, log
 from collections import deque
 import random
 
-# taken directly from Viff
+# Taken directly from VIFF
 def bits_to_val(bits):
     return sum([2**i * b for (i, b) in enumerate(reversed(bits))])
 
@@ -112,6 +112,26 @@ def sort(rel, key, ascending=True):
     bitonic_sort(0, len(rel), ascending=ascending)
     return rel
 
+# such difured wow
+class MagicDeferred:
+
+    def __init__(self, d):
+        self.d = d
+        self.children = []
+
+    def another(self):
+        child = Deferred()
+        self.children.append(child)
+        return child
+
+    def forward_callbacks(self, rt):
+
+        def forward_to(received, children):
+            for child in children:
+                rt.handle_deferred_data(child, received)
+
+        rt.schedule_callback(self.d, forward_to, self.children)
+
 def count(rel, cond):
     return sum([cond(row) for row in rel])
 
@@ -155,7 +175,7 @@ def cutofftail(f):
         return d
     return wrapper
 
-def join(rel, other_rel, rt, join_col, other_join_col, num_refs=1):
+def join(rel, other_rel, rt, join_col, other_join_col, magic):
 
     @cutofftail
     def _join(rels, rt, join_col, other_join_col):
@@ -170,10 +190,12 @@ def join(rel, other_rel, rt, join_col, other_join_col, num_refs=1):
                 result.append(result_row)
         return result
 
-    dl = DeferredList([next(rel), next(other_rel)])
-    return magic(rt.schedule_callback(dl, _join, rt, join_col, other_join_col), rt, num_refs)
+    dl = DeferredList([rel.another(), other_rel.another()])
+    md = MagicDeferred(rt.schedule_callback(dl, _join, rt, join_col, other_join_col))
+    magic.append(md)
+    return md
 
-def aggregate_sum(rel, rt, key_col, agg_col, num_refs=1):
+def aggregate_sum(rel, rt, key_col, agg_col, magic):
     
     @cutofftail
     def _aggregate_sum(rel, rt, key_col, agg_col):
@@ -201,45 +223,26 @@ def aggregate_sum(rel, rt, key_col, agg_col, num_refs=1):
 
         return result
 
-    return magic(rt.schedule_callback(next(rel), _aggregate_sum, rt, key_col, agg_col), rt, num_refs)
-
-def project(rel, rt, comp, num_refs=1):
+    md = MagicDeferred(rt.schedule_callback(rel.another(), _aggregate_sum, rt, key_col, agg_col))
+    magic.append(md)
+    return md
+    
+def project(rel, rt, comp, magic):
 
     def _project(rel, comp):
         return [comp(*row) for row in rel]
 
-    return magic(rt.schedule_callback(next(rel), _project, comp), rt, num_refs)
-
+    md = MagicDeferred(rt.schedule_callback(rel.another(), _project, comp))
+    magic.append(md)
+    return md
     
-def select(rel, rt, cond, num_refs=1):
+def select(rel, rt, cond, magic):
     # TODO: implement
-    return magic(next(rel), rt, num_refs)
-
-def output(rel, rt):
-
-    def _output(rel, rt):
-
-        def update_value(value, rel, row_idx, col_idx):
-            rel[row_idx][col_idx] = int(value)
-
-        def all_gathered(dummy, d, rel):
-            rel = [[int(v) for v in row] for row in rel]
-            rt.handle_deferred_data(d, rel)
-            
-        to_wait_on = []
-        for row_idx, row in enumerate(rel):
-            for col_idx, value in enumerate(row):
-                opened = rt.output(value)
-                rt.schedule_callback(opened, update_value, rel, row_idx, col_idx)
-                to_wait_on.append(opened)
-        d = Deferred() 
-        dl = gather_shares(to_wait_on)
-        rt.schedule_callback(dl, all_gathered, d, rel)
-        return d
-
-    return rt.schedule_callback(next(rel), _output, rt)
-
-def input(rel, rt, inputters, field, num_refs=1):
+    md = MagicDeferred(rel.another())
+    magic.append(md)
+    return md
+    
+def input(rel, rt, inputters, field, magic):
     
     def _input(rel, rt, inputters, field):
 
@@ -266,4 +269,31 @@ def input(rel, rt, inputters, field, num_refs=1):
         rt.schedule_callback(sizes, sizes_received, rel, shared_rel) 
         return shared_rel
 
-    return magic(_input(rel, rt, inputters, field), rt, num_refs)
+    md = MagicDeferred(_input(rel, rt, inputters, field))
+    magic.append(md)
+    return md
+    
+def output(rel, rt):
+
+    def _output(rel, rt):
+
+        def update_value(value, rel, row_idx, col_idx):
+            rel[row_idx][col_idx] = int(value)
+
+        def all_gathered(dummy, d, rel):
+            rel = [[int(v) for v in row] for row in rel]
+            rt.handle_deferred_data(d, rel)
+            
+        to_wait_on = []
+        for row_idx, row in enumerate(rel):
+            for col_idx, value in enumerate(row):
+                opened = rt.output(value)
+                rt.schedule_callback(opened, update_value, rel, row_idx, col_idx)
+                to_wait_on.append(opened)
+        d = Deferred() 
+        dl = gather_shares(to_wait_on)
+        rt.schedule_callback(dl, all_gathered, d, rel)
+        return d
+
+    return rt.schedule_callback(rel.another(), _output, rt)
+    

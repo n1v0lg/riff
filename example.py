@@ -44,48 +44,53 @@ def shutdown_wrapper(_, rt):
     rt.shutdown()
 
 def protocol(rt, Zp, rels):
+
+    magic = []
     
     selected_input = ext.input(
-        rels["selected_input"], rt, rt.players, Zp
+        rels["selected_input"], rt, rt.players, Zp, magic
     )
     
-    local_rev_obl_0 = ext.aggregate_sum(
-        selected_input, rt, 0, 1
+    local_rev = ext.aggregate_sum(
+        selected_input, rt, 0, 1, magic
     )
-    
+
     first_val_blank_math = ext.project(
-        local_rev_obl_0, rt, lambda e1, e2: [e1 * 0, e2]
+        local_rev, rt, lambda e1, e2: [e1 * 0, e2], magic
     )
     
     first_val_blank = ext.select(
-        first_val_blank_math, rt, None, num_refs=2
+        first_val_blank_math, rt, None, magic
     )
     
     total_rev = ext.aggregate_sum(
-        first_val_blank, rt, 0, 1
+        first_val_blank, rt, 0, 1, magic
     )
     
     scaled_local_rev = ext.project(
-        first_val_blank, rt, lambda e1, e2: [e1, e2 * 100]
+        first_val_blank, rt, lambda e1, e2: [e1, e2 * 100], magic
     )
     
     local_total_rev = ext.join(
-        scaled_local_rev, total_rev, rt, 0, 0
+        scaled_local_rev, total_rev, rt, 0, 0, magic
     )
-    
+
     market_share = ext.project(
         local_total_rev, rt, 
-        lambda e1, e2, e3: [e1, ext.divide(e2, e3), e3]
+        lambda e1, e2, e3: [e1, ext.divide(e2, e3), e3], magic
     )
-    
+
     market_share_squared = ext.project(
-        market_share, rt, lambda e1, e2, e3: [e1, e2 * e2, e3]
+        market_share, rt, lambda e1, e2, e3: [e1, e2 * e2, e3], magic
     )
-    
+
     hhi = ext.aggregate_sum(
-        market_share_squared, rt, 0, 1
+        market_share_squared, rt, 0, 1, magic
     )
     
+    for mag in magic:
+        mag.forward_callbacks(rt)
+
     hhi_opened = ext.output(hhi, rt)
     
     all_done = []
