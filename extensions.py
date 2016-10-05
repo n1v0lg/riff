@@ -259,13 +259,14 @@ class Rel:
     def input(self, rel, inputters, field):
         return self._input(rel, inputters, field)
         
-    def _output(self, rel):
+    def _output(self, rel, method, path):
 
         def update_value(value, rel, row_idx, col_idx):
             rel[row_idx][col_idx] = int(value)
 
         def all_gathered(dummy, d, rel):
             rel = [[int(v) for v in row] for row in rel]
+            method(rel, path)
             self.rt.handle_deferred_data(d, rel)
                 
         to_wait_on = []
@@ -279,9 +280,15 @@ class Rel:
         self.rt.schedule_callback(dl, all_gathered, d, rel)
         return d
 
-    def output(self, rel):
-        return self.rt.schedule_callback(rel.another(), self._output)
-    
+    @magic
+    def output(self, rel, method, path):
+        return self.rt.schedule_callback(rel.another(), self._output, method, path)
+        # return self._output(rel.another())
+        
     def finish(self):
+        all_defs = []
         for md in self.mag_defs:
             md.forward_callbacks(self.rt)
+            all_defs.extend(md.children)
+        dl = DeferredList(all_defs)
+        self.rt.schedule_callback(dl, lambda _: self.rt.shutdown())

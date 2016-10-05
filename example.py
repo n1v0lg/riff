@@ -16,28 +16,20 @@ import copy
 import random
 import subprocess
 
-def setup():
-    parser = OptionParser()
-    Runtime.add_options(parser)
-    options, args = parser.parse_args()
-    pid, players = load_config(args[0])
-    Zp = GF(find_prime(2**65, blum=True))
-    return pid, players, options, Zp
-
-def read_from_hdfs(base_dir, rel_name):
-    input_stream = subprocess.Popen(["hadoop", "fs", "-cat", base_dir + rel_name + "/*"], 
+def read_from_hdfs(input_path):
+    input_stream = subprocess.Popen(["hadoop", "fs", "-cat", input_path + "/*"], 
                                     stdout=subprocess.PIPE).stdout
     rel = [[int(val) for val in row.split()] for row in input_stream]
-    print "Read in from HDFS: ", rel_name, rel
+    print "Read in from HDFS: ", rel
     return rel
 
-def write_to_hdfs(rel, base_dir, rel_name):
+def write_to_hdfs(rel, output_path):
     
     def to_string(row):
         return ' '.join([str(v) for v in row])
 
     rel_str = '\n'.join([to_string(row) for row in rel])
-    print "Will write to HDFS: ", rel_name
+    print "Will write to HDFS: "
     print rel_str
 
     return True
@@ -45,13 +37,14 @@ def write_to_hdfs(rel, base_dir, rel_name):
 def shutdown_wrapper(_, rt):
     rt.shutdown()
 
-def protocol(rt, Zp, rels):
+def protocol(rt, Zp):
     
     ext = Rel(rt)
+    all_done = []
 
     selected_input = ext.input(
-        rels["selected_input"], rt.players, Zp
-    )
+        read_from_hdfs("/home/nikolaj/Desktop/work/Musketeer/MUSKETEER_ROOT/selected_input"), 
+        rt.players, Zp)
     
     local_rev = ext.aggregate_sum(
         selected_input, 0, 1
@@ -61,9 +54,7 @@ def protocol(rt, Zp, rels):
         local_rev, lambda e1, e2: [e1 * 0, e2]
     )
     
-    first_val_blank = ext.select(
-        first_val_blank_math, None
-    )
+    first_val_blank = ext.select(first_val_blank_math, None)
     
     total_rev = ext.aggregate_sum(
         first_val_blank, 0, 1
@@ -89,31 +80,28 @@ def protocol(rt, Zp, rels):
     hhi = ext.aggregate_sum(
         market_share_squared, 0, 1
     )
-    
-    hhi_opened = ext.output(hhi)
+
+    ext.output(hhi, write_to_hdfs, "path")
+
     ext.finish()
-
-    all_done = []
-    all_done.append(rt.schedule_callback(hhi_opened, write_to_hdfs, "", "hhi"))
-    rt.schedule_callback(DeferredList(all_done), shutdown_wrapper, rt)
-
 
 def report_error(err):
     import sys
     sys.stderr.write(str(err))
 
 if __name__ == "__main__":
-    pid, players, options, Zp = setup()
-    root_dir_path = "/home/nikolaj/Desktop/work/Musketeer/MUSKETEER_ROOT/"
-    rels = {}
-    rels["selected_input"] = read_from_hdfs(root_dir_path, "selected_input-" + str(pid))
-
+    parser = OptionParser()
+    Runtime.add_options(parser)
+    options, args = parser.parse_args()
+    pid, players = load_config(args[0])
+    Zp = GF(find_prime(2**65, blum=True))
+    
     runtime_class = make_runtime_class(
         mixins=[ProbabilisticEqualityMixin, ComparisonToft07Mixin]
     )
     pre_runtime = create_runtime(pid, players, 1, options, 
         runtime_class=runtime_class)
-    pre_runtime.addCallback(protocol, Zp, rels)
+    pre_runtime.addCallback(protocol, Zp)
     pre_runtime.addErrback(report_error)
 
     reactor.run()
