@@ -112,12 +112,12 @@ def sort(rel, key, ascending=True):
     bitonic_sort(0, len(rel), ascending=ascending)
     return rel
 
-# such defuredz wow
+# much deferred wow
 class MagicDeferred:
 
     def __init__(self, d):
-        self.d = d
         self.children = []
+        self.d = d
 
     def another(self):
         child = Deferred()
@@ -189,6 +189,8 @@ class Rel:
     @cutofftail
     def _aggregate_sum(self, rel, key_col, agg_col):
 
+        print "aggregation"
+
         # Note: the indicator value of the last element will
         # *always* be 1
         def cond_sum(e1, e2, key, val, ind):
@@ -230,11 +232,16 @@ class Rel:
         # TODO: implement
         return rel.another()
         
-    def _input(self, rel, inputters, field):
+    def _broadcast(self, parties, field, invalue):
+        values = self.rt.shamir_share(parties, field, invalue)
+        return gather_shares([self.rt.open(value) for value in values])
+        
+    def _input(self, rel, field):
 
-        def sizes_received(sizes, rel, shared_rel):
-            sizes = [int(size) for size in sizes]
-            num_cols = len(rel[0]) # bit of a hack
+        def dimsreceived(dims, rel, shared_rel):
+            # TODO: add sanity checks here
+            sizes = [int(size) for size in dims[0][1]]
+            numcols = max([int(col) for col in dims[1][1]])
             combined_rel = []
             for player in self.rt.players:
                 if self.rt.id == player:
@@ -245,45 +252,48 @@ class Rel:
                 else:
                     for _ in range(sizes[player - 1]):
                         combined_rel.append(
-                            [self.rt.input([player], field, None) for _ in range(num_cols)]
+                            [self.rt.input([player], field, None) for _ in range(numcols)]
                         )
             self.rt.handle_deferred_data(shared_rel, combined_rel)
-                
-        sizes = self.rt.shamir_share(inputters, field, len(rel))
-        sizes = gather_shares([self.rt.open(size) for size in sizes])
+        
+        sizes = self._broadcast(self.rt.players, field, len(rel))
+        subnumcols = 0
+        if rel:
+            subnumcols = len(rel[0])
+        numcols = self._broadcast(self.rt.players, field, subnumcols)
+        dl = DeferredList([sizes, numcols])
         shared_rel = Deferred()
-        self.rt.schedule_callback(sizes, sizes_received, rel, shared_rel) 
+        self.rt.schedule_callback(dl, dimsreceived, rel, shared_rel) 
         return shared_rel
         
     @magic
-    def input(self, rel, inputters, field):
-        return self._input(rel, inputters, field)
+    def input(self, rel, field):
+        return self._input(rel, field)
         
-    def _output(self, rel, method, path):
+    def _output(self, rel, recps):
 
-        def update_value(value, rel, row_idx, col_idx):
-            rel[row_idx][col_idx] = int(value)
-
-        def all_gathered(dummy, d, rel):
-            rel = [[int(v) for v in row] for row in rel]
-            method(rel, path)
-            self.rt.handle_deferred_data(d, rel)
-                
+        def all_gathered(rawrel, d):
+            print "result: ", rawrel
+            self.rt.handle_deferred_data(d, rawrel)
+            
         to_wait_on = []
         for row_idx, row in enumerate(rel):
             for col_idx, value in enumerate(row):
-                opened = self.rt.output(value)
-                self.rt.schedule_callback(opened, update_value, rel, row_idx, col_idx)
-                to_wait_on.append(opened)
-        d = Deferred() 
-        dl = gather_shares(to_wait_on)
-        self.rt.schedule_callback(dl, all_gathered, d, rel)
-        return d
+                opened = self.rt.output(value, recps)
+                if opened:
+                    to_wait_on.append(opened)
+        
+        if to_wait_on:
+            dl = gather_shares(to_wait_on)
+            d = Deferred()
+            self.rt.schedule_callback(dl, all_gathered, d)
+            return d
+        else:
+            return None
 
     @magic
-    def output(self, rel, method, path):
-        return self.rt.schedule_callback(rel.another(), self._output, method, path)
-        # return self._output(rel.another())
+    def output(self, rel, recps):
+        return self.rt.schedule_callback(rel.another(), self._output, recps)
         
     def finish(self):
         all_defs = []
