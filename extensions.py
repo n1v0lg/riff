@@ -112,6 +112,9 @@ def sort(rel, key, ascending=True):
     bitonic_sort(0, len(rel), ascending=ascending)
     return rel
 
+def count(rel, cond):
+    return sum([cond(row) for row in rel])
+
 # much deferred wow
 class MagicDeferred:
 
@@ -131,9 +134,6 @@ class MagicDeferred:
                 rt.handle_deferred_data(child, received)
 
         rt.schedule_callback(self.d, forward_to, self.children)
-
-def count(rel, cond):
-    return sum([cond(row) for row in rel])
 
 def magic(f):
 
@@ -189,8 +189,6 @@ class Rel:
     @cutofftail
     def _aggregate_sum(self, rel, key_col, agg_col):
 
-        print "aggregation"
-
         # Note: the indicator value of the last element will
         # *always* be 1
         def cond_sum(e1, e2, key, val, ind):
@@ -236,7 +234,7 @@ class Rel:
         values = self.rt.shamir_share(parties, field, invalue)
         return gather_shares([self.rt.open(value) for value in values])
         
-    def _input(self, rel, field):
+    def _scatter(self, rel, field):
 
         def dimsreceived(dims, rel, shared_rel):
             # TODO: add sanity checks here
@@ -267,18 +265,25 @@ class Rel:
         return shared_rel
         
     @magic
-    def input(self, rel, field):
-        return self._input(rel, field)
+    def scatter(self, rel, field):
+        return self._scatter(rel, field)
         
-    def _output(self, rel, recps):
+    def _gather(self, rel, recps):
 
-        def all_gathered(rawrel, d):
-            print "result: ", rawrel
-            self.rt.handle_deferred_data(d, rawrel)
+        def all_gathered(rawrel, d, numcols):
+            rel = []
+            newrow = tuple()
+            for idx, value in enumerate(rawrel):
+                if idx >= numcols and idx % numcols == 0:
+                    rel.append(newrow)
+                    newrow = tuple()
+                newrow += (int(value),)
+            rel.append(newrow)
+            self.rt.handle_deferred_data(d, rel)
             
         to_wait_on = []
-        for row_idx, row in enumerate(rel):
-            for col_idx, value in enumerate(row):
+        for row in rel:
+            for value in row:
                 opened = self.rt.output(value, recps)
                 if opened:
                     to_wait_on.append(opened)
@@ -286,15 +291,19 @@ class Rel:
         if to_wait_on:
             dl = gather_shares(to_wait_on)
             d = Deferred()
-            self.rt.schedule_callback(dl, all_gathered, d)
+            self.rt.schedule_callback(dl, all_gathered, d, len(rel[0]))
             return d
         else:
             return None
 
     @magic
-    def output(self, rel, recps):
-        return self.rt.schedule_callback(rel.another(), self._output, recps)
+    def gather(self, rel, recps):
+        return self.rt.schedule_callback(rel.another(), self._gather, recps)
         
+    @magic
+    def outputwith(self, rel, f):
+        return self.rt.schedule_callback(rel.another(), f)
+
     def finish(self):
         all_defs = []
         for md in self.mag_defs:

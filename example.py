@@ -15,18 +15,22 @@ from extensions import Rel, divide
 import copy
 import random
 import subprocess
+import sys
 
 def inputgen(pid):
     return [(1, 2), (3, 10), (1, 3), (2, 3)] if pid == 1 else []
 
+def output(rel):
+    print rel
+
 def protocol(rt, Zp):
     ext = Rel(rt)
-    selected_input = ext.input(inputgen(rt.id), Zp)
-    ext.output(selected_input, [1, 2, 3])
+    selected_input = ext.scatter(inputgen(rt.id), Zp)
+    gathered = ext.gather(selected_input, [1, 2, 3])
+    ext.outputwith(gathered, output)
     ext.finish()
 
 def report_error(err):
-    import sys
     sys.stderr.write(str(err))
 
 if __name__ == "__main__":
