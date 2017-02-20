@@ -17,18 +17,18 @@ import random
 import subprocess
 import sys
 
-def inputgen(pid):
-    return [(1, 1) for _ in range(100)] if pid == 1 else []
+def inputgen(pid, num_tups):
+    return [(1, 1) for _ in range(num_tups)] if pid == 1 else []
 
 def output(rel, path=""):
     print "Result: ", rel
 
-def protocol(rt, Zp):
+def protocol(rt, Zp, num_tups):
     ext = Rel(rt)
-    selected_input = ext.scatter(inputgen(rt.id), Zp)
-    gathered_keys = ext.gather(selected_input, [0], [1, 2, 3])
-    aggregated = ext.aggregate_sum(gathered_keys, 0, 1)
-    gathered = ext.gather(aggregated, [1], [1, 2, 3])
+    rel_a = ext.scatter(inputgen(rt.id, num_tups), Zp, [1, 1])
+    rel_b = ext.scatter(inputgen(rt.id, num_tups), Zp, [1, 1])
+    joined = ext.join(rel_a, rel_b, 0, 0, True)
+    gathered = ext.gather(joined, [0, 1, 2], [1, 2, 3])
     ext.outputwith(gathered, output)
     ext.finish()
 
@@ -40,6 +40,7 @@ if __name__ == "__main__":
     Runtime.add_options(parser)
     options, args = parser.parse_args()
     pid, players = load_config(args[0])
+    num_tups = int(args[1])
     Zp = GF(find_prime(2**65, blum=True))
     
     runtime_class = make_runtime_class(
@@ -47,7 +48,7 @@ if __name__ == "__main__":
     )
     pre_runtime = create_runtime(pid, players, 1, options, 
         runtime_class=runtime_class)
-    pre_runtime.addCallback(protocol, Zp)
+    pre_runtime.addCallback(protocol, Zp, num_tups)
     pre_runtime.addErrback(report_error)
 
     reactor.run()
