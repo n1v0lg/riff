@@ -21,7 +21,7 @@ def inputgen(pid, num_tups):
     return [(1, 1) for _ in range(num_tups)] if pid == 1 else []
 
 def output(rel, path=""):
-    print "Result: ", rel
+    print "Result: ", len(rel)
 
 def protocol(rt, Zp, num_tups):
     ext = Rel(rt)
